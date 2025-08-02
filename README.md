@@ -5,8 +5,8 @@ A sophisticated AI system for card-based combat games featuring Filipino mytholo
 ## 🎯 Features
 
 ### Core AI Capabilities  
-- **Enhanced Card System**: Cards with elemental properties (Fire, Water, Earth, Air, Neutral)
-- **Strategic Hand Evaluation**: Analyzes all possible 1-5 card combinations with elemental synergies
+- **Action-Based AI**: AI uses simple attack/defend/status actions instead of cards
+- **Player Card System**: Only players use cards with elemental properties (Fire, Water, Earth, Air, Neutral)
 - **6 AI Personalities**: Cautious, Aggressive, Calculating, Elemental, Chaotic, Adaptive
 - **Filipino Mythology Creatures**: Tikbalang, Kapre, Manananggal, Bakunawa, and more
 - **Adaptive Learning**: AI learns from player behavior and adapts strategies
@@ -56,8 +56,10 @@ combat_state = CombatState(
 # Execute AI turn
 result = ai_manager.execute_ai_turn(combat_state)
 
-print(f"🐉 AI Decision: {result.decision.reasoning}")
+print(f"🐉 AI Action: {result.decision.action.value}")
+print(f"🐉 AI Reasoning: {result.decision.reasoning}")
 print(f"💥 Damage: {result.damage_dealt}")
+print(f"🛡️ Block: {result.block_gained}")
 print(f"✨ Effects: {', '.join(result.special_effects)}")
 ```
 
@@ -103,29 +105,27 @@ print(f"AI would play: {preview['ai_decision']['action']}")
 
 ## 🎮 Integration Guide
 
-### 1. Hand Evaluation
-The `PokerHandEvaluator` provides comprehensive poker hand analysis:
+### 1. Player Hand Evaluation
+Players use cards while AI uses actions. The `EnhancedHandEvaluator` provides poker hand analysis for players:
 
 ```python
-from poker_hand_evaluator import PokerHandEvaluator, Card, Suit
+from enhanced_card_system import EnhancedHandEvaluator, Card, Suit
 
-evaluator = PokerHandEvaluator()
-hand = [Card(1, Suit.SPADES), ...]  # Your 5-card hand
-hand_type, score, kickers = evaluator.evaluate_hand(hand)
-strength_percentage = evaluator.get_hand_strength_percentage(hand_type, score)
+# Evaluate player's card hand
+hand = [Card("A", Suit.SPADES, Element.FIRE), ...]  # Player's cards
+evaluation = EnhancedHandEvaluator.evaluate_hand(hand)
+damage = evaluation.total_value
 ```
 
-### 2. AI Decision Making
-The `AIDecisionEngine` handles strategic decisions:
+### 2. AI Action Selection
+The AI chooses actions instead of playing cards:
 
 ```python
-from ai_decision_engine import AIDecisionEngine, AIPersonality
+from bathala_ai import BathalaAI, ActionType
 
-# Create AI with specific personality
-ai = AIDecisionEngine(AIPersonality.AGGRESSIVE)
-
-# Get decision based on hand and game state
-decision = ai.make_decision(hand, game_state)
+# AI selects from attack/defend/status actions
+decision = ai.make_decision(game_context)
+# decision.action is one of: ATTACK, DEFEND, STATUS
 ```
 
 ### 3. Game Integration
@@ -141,38 +141,41 @@ ai = AIController(starting_level=1)
 decision = ai.get_ai_decision(ai_hand, game_state)
 
 # Process decision in your game logic
-if decision.action == ActionType.RAISE:
-    handle_ai_raise(decision.bet_amount)
-elif decision.action == ActionType.FOLD:
-    handle_ai_fold()
+if decision.action == ActionType.ATTACK:
+    handle_ai_attack(decision.estimated_damage)
+elif decision.action == ActionType.DEFEND:
+    handle_ai_defend(decision.estimated_block)
+elif decision.action == ActionType.STATUS:
+    handle_ai_status_effect(decision.special_effects)
 # ... etc
 
 # After each game: report result
 ai.report_game_result(ai_won=winner == "AI")
 ```
 
-### 4. Balatro-specific Adaptations
+### 4. Card Combat Adaptations
 
-For Balatro-like mechanics, you can extend the system:
+For card combat games, the AI focuses on actions while players manage cards:
 
 ```python
-# Custom game state for Balatro mechanics
-class BalatroGameState(GameState):
+# Custom game context for card combat
+class CardCombatContext(GameContext):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.joker_cards = []        # Active joker cards
-        self.score_multiplier = 1.0  # Current score multiplier
-        self.special_hands = []      # Available special hand types
+        self.player_hand_size = 0    # Player's current hand size
+        self.player_deck_size = 0    # Player's remaining deck
+        self.special_effects = []    # Active battlefield effects
 
-# Extend AI decision engine for Balatro rules
-class BalatroAI(AIDecisionEngine):
-    def make_decision(self, hand, game_state):
-        # Consider Balatro-specific factors
-        decision = super().make_decision(hand, game_state)
+# AI chooses actions based on player card usage patterns
+class EnhancedBathalaAI(BathalaAI):
+    def make_decision(self, game_context):
+        # AI considers player's card playing patterns
+        decision = super().make_decision(game_context)
         
-        # Adjust for joker effects
-        if game_state.joker_cards:
-            decision = self._apply_joker_strategy(decision, game_state)
+        # Adjust actions based on player behavior
+        if self.player_patterns.get("fire", 0) > 5:
+            # Player uses lots of fire - AI might defend more
+            decision = self._counter_fire_strategy(decision)
         
         return decision
 ```
@@ -290,9 +293,10 @@ This AI system is provided as-is for integration into your Balatro-like poker ga
 
 Your Filipino mythology creatures are now powered by sophisticated Python AI that provides:
 
-- **🧠 Strategic Intelligence**: Thinks multiple moves ahead with advanced hand evaluation
+- **🧠 Strategic Intelligence**: Makes smart action choices based on combat situations
 - **🎭 Cultural Authenticity**: Creature behaviors reflecting Filipino folklore  
-- **📈 Adaptive Learning**: Evolves and counters player strategies
+- **📈 Adaptive Learning**: Evolves and counters player card strategies
+- **⚔️ Action-Based Combat**: Simple attack/defend/status actions while players use cards
 - **⚡ Production Quality**: Professional-grade system ready for real games
 - **🔧 Easy Integration**: Simple 3-line setup with comprehensive documentation
 

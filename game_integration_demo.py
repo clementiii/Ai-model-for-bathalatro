@@ -63,7 +63,6 @@ class GameIntegrationDemo:
             difficulty_level=3,
             enable_adaptation=True,
             debug_mode=True,
-            ai_card_count=8,
             auto_adjust_difficulty=False
         )
         self.ai_manager = AIManager(ai_config)
@@ -177,7 +176,7 @@ class GameIntegrationDemo:
             ai_max_health=self.current_enemy.max_health,
             ai_block=self.current_enemy.block,
             player_hand_size=len(self.player.hand),
-            ai_hand_size=8  # AI starts with 8 cards
+            ai_hand_size=0  # AI doesn't have cards anymore
         )
         
         print(f"⚔️ Combat Started! 🆚 {self.current_enemy.name}")
@@ -261,11 +260,8 @@ class GameIntegrationDemo:
         # Get AI decision and execute turn
         ai_result = self.ai_manager.execute_ai_turn(self.combat_state)
         
-        print(f"🎯 AI Decision: {ai_result.decision.action.value}")
+        print(f"🎯 AI Action: {ai_result.decision.action.value}")
         print(f"💭 Reasoning: {ai_result.decision.reasoning}")
-        
-        if ai_result.cards_played:
-            print(f"🃏 AI Played: {[str(card) for card in ai_result.cards_played]}")
         
         # Apply AI effects
         if ai_result.damage_dealt > 0:
@@ -314,7 +310,12 @@ class GameIntegrationDemo:
         
         preview = self.ai_manager.preview_ai_action(self.combat_state)
         if preview:
-            return f"AI might: {preview.reasoning} (~{preview.estimated_damage} damage)"
+            if preview.action.value == "attack":
+                return f"AI might: {preview.action.value} (~{preview.estimated_damage} damage)"
+            elif preview.action.value == "defend":
+                return f"AI might: {preview.action.value} (~{preview.estimated_block} block)"
+            else:
+                return f"AI might: {preview.action.value} (status effect)"
         else:
             return "AI is contemplating..."
     

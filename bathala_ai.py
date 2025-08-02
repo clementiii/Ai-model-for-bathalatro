@@ -4,19 +4,18 @@ Coordinates all AI systems and provides intelligent decision-making for creature
 """
 
 import random
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from enhanced_card_system import Card, HandEvaluation, EnhancedHandEvaluator, Element, Suit, CardDeck, create_themed_deck
 from ai_personality import AIPersonalityConfig, get_personality_for_creature, AIPersonalityType
-from hand_strategy import HandStrategy, GameContext, PlayerAction, HandCombination
+from hand_strategy import GameContext, PlayerAction
 
 
 class ActionType(Enum):
-    PLAY_HAND = "play_hand"
-    END_TURN = "end_turn"
-    SPECIAL_ABILITY = "special_ability"
+    ATTACK = "attack"
+    DEFEND = "defend"
+    STATUS = "status"
 
 
 @dataclass
@@ -41,14 +40,12 @@ class Enemy:
 class AIDecision:
     """AI's decision with complete reasoning and analysis"""
     action: ActionType
-    cards: List[Card]
-    evaluation: Optional[HandEvaluation] = None
     confidence: float = 0.5
     reasoning: str = ""
     estimated_damage: int = 0
+    estimated_block: int = 0
     risk_level: float = 0.5
     special_effects: List[str] = None
-    bluff_factor: float = 0.0
     
     def __post_init__(self):
         if self.special_effects is None:
@@ -77,53 +74,41 @@ class BathalaAI:
         self.enemy = enemy
         self.difficulty_level = difficulty_level
         self.personality = get_personality_for_creature(enemy.name)
-        self.hand_strategy = HandStrategy(self.personality)
         self.difficulty_modifier = self._calculate_difficulty_modifier(difficulty_level)
-        self.available_cards = self._generate_ai_cards()
         self.statistics = AIStatistics(personality_type=self.personality.name)
         
         # Combat memory and learning
         self.combat_memory: List[Dict] = []
         self.player_patterns: Dict[str, int] = {}
         
+        # Action preferences based on personality
+        self.action_preferences = self._calculate_action_preferences()
+        
     def make_decision(self, game_context: GameContext) -> AIDecision:
         """Main decision-making method called each AI turn"""
         self.statistics.turns_played += 1
         
-        # Find best hand combination
-        best_hand = self.hand_strategy.find_best_hand(self.available_cards, game_context)
+        # Choose action based on current situation and personality
+        action = self._choose_action(game_context)
         
-        if not best_hand:
-            return self._create_end_turn_decision("No viable hands available")
+        # Calculate action effects
+        damage, block, effects = self._calculate_action_effects(action, game_context)
         
-        # Check if AI should use special ability instead
-        special_decision = self._consider_special_ability(game_context, best_hand)
-        if special_decision:
-            return special_decision
+        # Generate reasoning
+        reasoning = self._generate_reasoning(action, game_context)
         
-        # Apply difficulty modifier to the hand
-        modified_evaluation = self._apply_difficulty_modifier(best_hand.evaluation)
+        # Calculate confidence based on situation
+        confidence = self._calculate_confidence(action, game_context)
         
-        # Update statistics
-        self._update_statistics(best_hand, modified_evaluation)
-        
-        # Remove used cards from available pool
-        self._remove_used_cards(best_hand.cards)
-        
-        # Determine if this is a bluff
-        bluff_factor = self._calculate_bluff_factor(best_hand, game_context)
-        
-        # Create decision with enhanced reasoning
+        # Create decision
         decision = AIDecision(
-            action=ActionType.PLAY_HAND,
-            cards=best_hand.cards.copy(),
-            evaluation=modified_evaluation,
-            confidence=best_hand.confidence,
-            reasoning=self._enhance_reasoning(best_hand.reasoning, game_context),
-            estimated_damage=modified_evaluation.total_value,
-            risk_level=best_hand.risk_level,
-            special_effects=modified_evaluation.special_effects.copy(),
-            bluff_factor=bluff_factor
+            action=action,
+            confidence=confidence,
+            reasoning=reasoning,
+            estimated_damage=damage,
+            estimated_block=block,
+            risk_level=self._calculate_risk_level(action, game_context),
+            special_effects=effects
         )
         
         # Store decision in combat memory
@@ -131,44 +116,44 @@ class BathalaAI:
         
         return decision
     
-    def _generate_ai_cards(self) -> List[Card]:
-        """Generate AI's starting cards based on creature type and difficulty"""
-        card_count = self._get_card_count_for_creature()
+    def _calculate_action_preferences(self) -> Dict[ActionType, float]:
+        """Calculate action preferences based on personality and creature type"""
+        # Base preferences
+        preferences = {
+            ActionType.ATTACK: 0.4,
+            ActionType.DEFEND: 0.3,
+            ActionType.STATUS: 0.3
+        }
         
-        # Create themed deck based on creature
-        if self.enemy.name in ["Kapre", "Dwende", "Duwende Chief"]:
-            deck = create_themed_deck("earth_creature")
-        elif self.enemy.name in ["Manananggal", "Tikbalang"]:
-            deck = create_themed_deck("air_creature")
-        elif self.enemy.name in ["Aswang", "Sigbin"]:
-            deck = create_themed_deck("fire_creature")
-        elif self.enemy.name == "Bakunawa":
-            deck = create_themed_deck("chaos_creature")  # Boss gets mixed elements
-        else:
-            deck = create_themed_deck("balanced")
+        # Adjust based on personality
+        if self.personality.name == "Aggressive":
+            preferences[ActionType.ATTACK] += 0.3
+            preferences[ActionType.DEFEND] -= 0.1
+        elif self.personality.name == "Cautious":
+            preferences[ActionType.DEFEND] += 0.3
+            preferences[ActionType.ATTACK] -= 0.1
+        elif self.personality.name == "Calculating":
+            preferences[ActionType.STATUS] += 0.2
+            preferences[ActionType.ATTACK] -= 0.1
         
-        deck.shuffle()
-        cards = deck.draw(card_count)
+        # Adjust based on creature type
+        creature_adjustments = {
+            "Bakunawa": {ActionType.ATTACK: 0.2, ActionType.STATUS: 0.1},  # Boss - more aggressive
+            "Aswang": {ActionType.ATTACK: 0.15, ActionType.DEFEND: -0.1},  # Aggressive creature
+            "Kapre": {ActionType.DEFEND: 0.15, ActionType.STATUS: 0.1},   # Defensive earth spirit
+            "Manananggal": {ActionType.ATTACK: 0.1, ActionType.STATUS: 0.1}, # Flying terror
+        }
         
-        # Assign unique IDs
-        for i, card in enumerate(cards):
-            card.id = f"ai_{self.enemy.name}_{i}"
-            card.playable = True
+        if self.enemy.name in creature_adjustments:
+            for action, adjustment in creature_adjustments[self.enemy.name].items():
+                preferences[action] = max(0.1, preferences[action] + adjustment)
         
-        return cards
-    
-    def _get_card_count_for_creature(self) -> int:
-        """Get number of cards based on creature type and difficulty"""
-        base_count = 7 + self.difficulty_level
+        # Normalize to ensure they sum to 1.0
+        total = sum(preferences.values())
+        for action in preferences:
+            preferences[action] /= total
         
-        # Boss enemies get more cards
-        if self.enemy.max_health > 80:
-            return base_count + 4
-        # Elite enemies get slightly more
-        elif self.enemy.max_health > 40:
-            return base_count + 2
-        
-        return base_count
+        return preferences
     
     def _calculate_difficulty_modifier(self, level: int) -> float:
         """Calculate difficulty modifier based on level (1-10+)"""
@@ -177,186 +162,247 @@ class BathalaAI:
         # Level 10: 1.5x (much harder)
         return max(0.6, min(2.0, 0.6 + (level * 0.09)))
     
-    def _apply_difficulty_modifier(self, evaluation: HandEvaluation) -> HandEvaluation:
-        """Apply difficulty scaling to hand evaluation"""
-        modifier = self.difficulty_modifier
+    def _choose_action(self, context: GameContext) -> ActionType:
+        """Choose the best action based on current situation"""
+        # Get current attack pattern action
+        pattern_action = self.enemy.attack_pattern[self.enemy.current_pattern_index]
         
-        return HandEvaluation(
-            hand_type=evaluation.hand_type,
-            base_value=evaluation.base_value,
-            elemental_bonus=int(evaluation.elemental_bonus * modifier),
-            total_value=int(evaluation.total_value * modifier),
-            description=evaluation.description + (f" (Enhanced x{modifier:.1f})" if modifier > 1.0 else ""),
-            confidence=evaluation.confidence,
-            special_effects=evaluation.special_effects.copy()
-        )
-    
-    def _consider_special_ability(self, context: GameContext, best_hand: HandCombination) -> Optional[AIDecision]:
-        """Consider using special abilities instead of normal attack"""
-        current_action = self.enemy.attack_pattern[self.enemy.current_pattern_index]
+        # Convert pattern action to ActionType or use situation-based choice
+        if pattern_action == "attack":
+            base_action = ActionType.ATTACK
+        elif pattern_action in ["defend", "smoke", "block"]:
+            base_action = ActionType.DEFEND
+        else:
+            base_action = ActionType.STATUS  # Special abilities become status actions
         
-        # Only use special abilities for non-attack patterns
-        if current_action == "attack":
-            return None
+        # Apply personality and situational modifiers
+        action_scores = self.action_preferences.copy()
         
-        # Evaluate special ability value
-        special_value = self._evaluate_special_ability(current_action, context)
+        # Situational adjustments
+        ai_health_ratio = context.get_ai_health_ratio()
+        player_health_ratio = context.get_player_health_ratio()
         
-        # Compare with best hand value
-        if special_value > best_hand.strategic_value * 1.3:
-            self.statistics.special_abilities_used += 1
-            return AIDecision(
-                action=ActionType.SPECIAL_ABILITY,
-                cards=[],
-                confidence=0.8,
-                reasoning=f"Using {current_action} special ability instead of attack",
-                estimated_damage=0,
-                special_effects=[self._get_special_ability_description(current_action)]
-            )
-        
-        return None
-    
-    def _evaluate_special_ability(self, ability: str, context: GameContext) -> float:
-        """Evaluate the strategic value of using a special ability"""
-        ability_values = {
-            # Defensive abilities
-            "defend": 30 if context.get_ai_health_ratio() < 0.5 else 15,
-            "smoke": 25 if context.get_ai_health_ratio() < 0.6 else 12,
-            "block": 35 if context.get_ai_health_ratio() < 0.4 else 18,
-            
-            # Buff abilities
-            "buff": 40 if context.turn_number < 5 else 20,
-            "command": 35 if context.turn_number < 6 else 15,
-            "power_up": 30 if context.turn_number < 7 else 10,
-            
-            # Disruptive abilities
-            "confuse": 25 if context.cards_remaining > 5 else 10,
-            "mischief": 20 if context.cards_remaining > 4 else 8,
-            "deceive": 30 if context.get_player_health_ratio() > 0.6 else 15,
-            "invisibility": 35,
-            
-            # Transformation abilities
-            "shapeshift": 25,
-            "split": 40 if context.get_ai_health_ratio() < 0.3 else 20,
-            "flight": 30,
-            
-            # Boss abilities
-            "eclipse": 45 if context.get_player_health_ratio() < 0.5 else 25,
-            "devour": 50 if context.cards_remaining > 6 else 30,
-            "summon": 35,
-        }
-        
-        return ability_values.get(ability, 25)
-    
-    def _get_special_ability_description(self, ability: str) -> str:
-        """Get description of special ability effects"""
-        descriptions = {
-            "confuse": "😵 Confuse: Player discards a random card",
-            "smoke": "💨 Smoke Screen: +8 block, reduce player accuracy",
-            "mischief": "😈 Mischief: Shuffles player's hand",
-            "defend": "🛡️ Defensive Stance: +10 block",
-            "buff": "💪 Power Up: +5 damage next turn",
-            "command": "👑 Command: Summons ally creature",
-            "invisibility": "👻 Invisibility: Next attack ignores block",
-            "deceive": "🎭 Deceive: Shows false intent next turn",
-            "flight": "🦅 Flight: Immune to ground attacks",
-            "split": "✂️ Split: Creates copy with half health",
-            "shapeshift": "🔄 Shapeshift: Changes element affinity",
-            "eclipse": "🌑 Eclipse: Blocks all healing this turn",
-            "devour": "🦈 Devour: Steals player cards and gains health",
-        }
-        return descriptions.get(ability, f"⚡ {ability.title()}: Special ability activated")
-    
-    def _calculate_bluff_factor(self, best_hand: HandCombination, context: GameContext) -> float:
-        """Calculate if this play contains bluffing elements"""
-        bluff = 0.0
-        
-        # Check personality bluff tendency
-        if random.random() < self.personality.bluff_chance:
-            # Weak hand with aggressive play = bluff
-            if best_hand.evaluation.total_value < 20 and best_hand.strategic_value > 30:
-                bluff = 0.7
-            # High confidence on mediocre hand = bluff
-            elif best_hand.confidence > 0.8 and best_hand.evaluation.total_value < 25:
-                bluff = 0.5
-        
-        # Desperation bluffs
-        if context.is_desperate_situation() and best_hand.evaluation.total_value < 15:
-            bluff = max(bluff, 0.6)
-        
-        # Track bluff success/failure
-        if bluff > 0.3:
-            if best_hand.evaluation.total_value > 20:
-                self.statistics.successful_bluffs += 1
+        # Low health - prefer defense or desperate attacks
+        if ai_health_ratio < 0.3:
+            if self.personality.name == "Aggressive":
+                action_scores[ActionType.ATTACK] += 0.2  # Go all out
             else:
-                self.statistics.failed_bluffs += 1
+                action_scores[ActionType.DEFEND] += 0.3  # Play defensive
         
-        return bluff
+        # Player low health - go for the kill
+        if player_health_ratio < 0.3:
+            action_scores[ActionType.ATTACK] += 0.4
+            action_scores[ActionType.DEFEND] -= 0.2
+        
+        # Early game - more status effects
+        if context.turn_number <= 3:
+            action_scores[ActionType.STATUS] += 0.2
+        
+        # Choose action with highest score (with some randomness)
+        if random.random() < 0.8:  # 80% choose best, 20% random for unpredictability
+            return max(action_scores.keys(), key=lambda x: action_scores[x])
+        else:
+            # Weight random choice by scores
+            actions = list(action_scores.keys())
+            weights = list(action_scores.values())
+            return random.choices(actions, weights=weights)[0]
     
-    def _enhance_reasoning(self, base_reasoning: str, context: GameContext) -> str:
-        """Enhance reasoning with creature-specific context and flavor"""
-        enhancements = [base_reasoning]
+    def _calculate_action_effects(self, action: ActionType, context: GameContext) -> Tuple[int, int, List[str]]:
+        """Calculate damage, block, and special effects for chosen action"""
+        damage = 0
+        block = 0
+        effects = []
         
-        # Add creature-specific flavor text
+        # Base values from enemy stats
+        base_damage = self.enemy.damage
+        
+        if action == ActionType.ATTACK:
+            damage = int(base_damage * self.difficulty_modifier)
+            
+            # Creature-specific attack effects
+            if self.enemy.name == "Bakunawa":
+                effects.append("🐉 Dragon's Fury: Ignores some block")
+                damage = int(damage * 1.2)
+            elif self.enemy.name == "Aswang":
+                effects.append("👹 Shapeshifter Strike: Variable damage")
+                damage = int(damage * (0.8 + random.random() * 0.6))  # 80-140% damage
+            elif self.enemy.name == "Manananggal":
+                effects.append("🦇 Terror Flight: Causes fear")
+            
+        elif action == ActionType.DEFEND:
+            block = int((8 + self.difficulty_level * 2) * self.difficulty_modifier)
+            
+            # Creature-specific defensive effects
+            if self.enemy.name == "Kapre":
+                effects.append("🌳 Nature's Shield: Enhanced defense")
+                block = int(block * 1.3)
+            elif self.enemy.name == "Dwende":
+                effects.append("🏔️ Earth Armor: Damage reduction")
+                
+        elif action == ActionType.STATUS:
+            # Get current pattern action for status effects
+            pattern_action = self.enemy.attack_pattern[self.enemy.current_pattern_index]
+            status_effect = self._get_status_effect_description(pattern_action)
+            effects.append(status_effect)
+            
+            # Some status effects also provide minor benefits
+            if pattern_action in ["buff", "power_up"]:
+                effects.append("💪 Next attack deals +3 damage")
+            elif pattern_action in ["heal", "regenerate"]:
+                effects.append("💚 Recovers 5 health")
+        
+        return damage, block, effects
+    
+    def _generate_reasoning(self, action: ActionType, context: GameContext) -> str:
+        """Generate reasoning for the chosen action"""
+        reasoning_parts = []
+        
+        # Base action reasoning
+        if action == ActionType.ATTACK:
+            reasoning_parts.append("Launching aggressive assault")
+        elif action == ActionType.DEFEND:
+            reasoning_parts.append("Taking defensive stance")
+        else:
+            reasoning_parts.append("Using special ability")
+        
+        # Situational reasoning
+        ai_health_ratio = context.get_ai_health_ratio()
+        player_health_ratio = context.get_player_health_ratio()
+        
+        if ai_health_ratio < 0.3:
+            reasoning_parts.append("desperate situation calls for bold action")
+        elif player_health_ratio < 0.3:
+            reasoning_parts.append("victory is within reach")
+        elif context.turn_number <= 2:
+            reasoning_parts.append("establishing early game advantage")
+        
+        # Personality flavor
+        personality_flavor = {
+            "Aggressive": "with overwhelming force",
+            "Cautious": "with careful consideration", 
+            "Calculating": "after strategic analysis",
+            "Adaptive": "adapting to the situation",
+            "Chaotic": "with unpredictable tactics"
+        }
+        
+        if self.personality.name in personality_flavor:
+            reasoning_parts.append(personality_flavor[self.personality.name])
+        
+        # Creature-specific flavor
         creature_flavor = {
-            "Tikbalang": "The trickster spirit plays unpredictably",
-            "Kapre": "The tree spirit draws power from nature's elements",
-            "Manananggal": "The flying terror strikes with supernatural precision",
-            "Bakunawa": "The dragon's ancient wisdom guides its strategy",
-            "Aswang": "The shapeshifter hunts with primal cunning",
-            "Dwende": "The earth spirit plays defensively",
-            "Sigbin": "The shadow creature moves with deadly stealth",
-            "Tiyanak": "The deceptive spirit lures with false innocence"
+            "Tikbalang": "The trickster spirit confuses its foe",
+            "Kapre": "The nature spirit draws power from the earth",
+            "Manananggal": "The terror takes to the skies",
+            "Bakunawa": "The ancient dragon unleashes its might",
+            "Aswang": "The shapeshifter reveals its true nature"
         }
         
         if self.enemy.name in creature_flavor:
-            enhancements.append(creature_flavor[self.enemy.name])
+            reasoning_parts.append(creature_flavor[self.enemy.name])
         
-        # Add tactical context
-        if context.is_desperate_situation():
-            enhancements.append("Desperation drives bold tactics")
-        elif context.is_winning_position():
-            enhancements.append("Maintaining dominance with calculated aggression")
-        elif context.get_player_health_ratio() < 0.4:
-            enhancements.append("Victory is within reach")
+        return "; ".join(reasoning_parts)
+    
+    def _calculate_confidence(self, action: ActionType, context: GameContext) -> float:
+        """Calculate confidence level for the chosen action"""
+        base_confidence = 0.7
         
-        # Add difficulty context
+        # Adjust based on health situations
+        ai_health_ratio = context.get_ai_health_ratio()
+        player_health_ratio = context.get_player_health_ratio()
+        
+        # More confident when player is low health
+        if player_health_ratio < 0.3:
+            base_confidence += 0.2
+        
+        # Less confident when AI is low health
+        if ai_health_ratio < 0.3:
+            base_confidence -= 0.2
+        
+        # Action-specific confidence
+        if action == ActionType.ATTACK:
+            # Aggressive personalities more confident in attacks
+            if self.personality.name == "Aggressive":
+                base_confidence += 0.1
+            # Cautious personalities less confident in attacks when low health
+            elif self.personality.name == "Cautious" and ai_health_ratio < 0.5:
+                base_confidence -= 0.1
+                
+        elif action == ActionType.DEFEND:
+            # Cautious personalities more confident in defense
+            if self.personality.name == "Cautious":
+                base_confidence += 0.1
+                
+        # Difficulty modifier affects confidence
         if self.difficulty_level >= 7:
-            enhancements.append("Master-level strategic thinking")
-        elif self.difficulty_level >= 5:
-            enhancements.append("Advanced tactical analysis")
+            base_confidence += 0.1  # High level AI more confident
+        elif self.difficulty_level <= 3:
+            base_confidence -= 0.1  # Low level AI less confident
         
-        return "; ".join(enhancements)
+        return max(0.1, min(1.0, base_confidence))
     
-    def _create_end_turn_decision(self, reason: str) -> AIDecision:
-        """Create a decision to end turn"""
-        return AIDecision(
-            action=ActionType.END_TURN,
-            cards=[],
-            confidence=0.3,
-            reasoning=reason,
-            estimated_damage=0
-        )
+    def _calculate_risk_level(self, action: ActionType, context: GameContext) -> float:
+        """Calculate risk level for the chosen action"""
+        base_risk = 0.3
+        
+        ai_health_ratio = context.get_ai_health_ratio()
+        
+        if action == ActionType.ATTACK:
+            base_risk = 0.6  # Attacking is riskier
+            # More risky when low health
+            if ai_health_ratio < 0.3:
+                base_risk += 0.2
+        elif action == ActionType.DEFEND:
+            base_risk = 0.2  # Defending is safer
+        else:  # STATUS
+            base_risk = 0.4  # Status effects have medium risk
+        
+        # Personality adjustments
+        if self.personality.name == "Aggressive":
+            base_risk += 0.1  # Aggressive AI takes more risks
+        elif self.personality.name == "Cautious":
+            base_risk -= 0.1  # Cautious AI takes fewer risks
+        
+        return max(0.1, min(0.9, base_risk))
     
-    def _update_statistics(self, hand_combination: HandCombination, modified_evaluation: HandEvaluation):
+    def _get_status_effect_description(self, ability: str) -> str:
+        """Get description of status effects"""
+        descriptions = {
+            "confuse": "😵 Confuse: Player loses focus",
+            "smoke": "💨 Smoke Screen: Reduces player accuracy",
+            "mischief": "😈 Mischief: Causes chaos",
+            "defend": "🛡️ Defensive Stance: Increased protection",
+            "buff": "💪 Power Up: Enhanced strength",
+            "command": "👑 Command: Rally allies",
+            "invisibility": "👻 Invisibility: Becomes untargetable",
+            "deceive": "🎭 Deceive: Creates illusions",
+            "flight": "🦅 Flight: Takes to the air",
+            "split": "✂️ Split: Divides into copies",
+            "shapeshift": "🔄 Shapeshift: Changes form",
+            "eclipse": "🌑 Eclipse: Darkens the battlefield",
+            "devour": "🦈 Devour: Consumes energy",
+            "summon": "👻 Summon: Calls forth allies",
+            "heal": "💚 Heal: Restores vitality",
+            "poison": "☠️ Poison: Inflicts toxins",
+            "stun": "⚡ Stun: Paralyzes target",
+        }
+        return descriptions.get(ability, f"⚡ {ability.title()}: Special effect activated")
+    
+    def _update_statistics(self, action: ActionType, damage: int, block: int):
         """Update AI performance statistics"""
-        self.statistics.hands_played += 1
-        self.statistics.total_damage_dealt += modified_evaluation.total_value
-        self.statistics.average_hand_value = self.statistics.total_damage_dealt / max(1, self.statistics.hands_played)
+        if action == ActionType.ATTACK:
+            self.statistics.total_damage_dealt += damage
         
-        # Track elemental combos
-        elements = set(card.element for card in hand_combination.cards)
-        if len(elements) == 1 and len(hand_combination.cards) > 2:
-            self.statistics.elemental_combos_played += 1
-        
-        # Update adaptation level
-        self.statistics.adaptation_level = min(100.0, 
-            len(self.hand_strategy.player_behavior_memory) * self.personality.adaptation_rate * 5)
+        # Update averages
+        if self.statistics.turns_played > 0:
+            self.statistics.average_hand_value = self.statistics.total_damage_dealt / self.statistics.turns_played
     
-    def _remove_used_cards(self, used_cards: List[Card]):
-        """Remove used cards from available pool"""
-        for used_card in used_cards:
-            self.available_cards = [card for card in self.available_cards if card.id != used_card.id]
+
+    
+
+    
+
+    
+
     
     def _record_decision(self, decision: AIDecision, context: GameContext):
         """Record decision in combat memory for analysis"""
@@ -364,6 +410,7 @@ class BathalaAI:
             "turn": self.statistics.turns_played,
             "action": decision.action.value,
             "damage": decision.estimated_damage,
+            "block": decision.estimated_block,
             "confidence": decision.confidence,
             "risk": decision.risk_level,
             "context": {
@@ -377,43 +424,37 @@ class BathalaAI:
         # Keep memory manageable
         if len(self.combat_memory) > 20:
             self.combat_memory.pop(0)
+        
+        # Update statistics
+        self._update_statistics(decision.action, decision.estimated_damage, decision.estimated_block)
     
     def record_player_action(self, action: PlayerAction):
         """Record player action for adaptive learning"""
-        self.hand_strategy.record_player_action(action)
-        
-        # Update player pattern tracking
+        # Update player pattern tracking for cards
         for card in action.cards_played:
             element_key = card.element.value
             self.player_patterns[element_key] = self.player_patterns.get(element_key, 0) + 1
         
+        # Simple adaptation based on player behavior
+        damage_dealt = action.evaluation.total_value if action.evaluation else 0
+        
+        # Adjust AI behavior based on player aggression
+        if damage_dealt > 25:  # High damage play
+            # Player is aggressive, AI should be more defensive or counter-aggressive
+            self.action_preferences[ActionType.DEFEND] = min(0.6, self.action_preferences[ActionType.DEFEND] + 0.05)
+        elif damage_dealt < 10:  # Low damage play
+            # Player is passive, AI can be more aggressive
+            self.action_preferences[ActionType.ATTACK] = min(0.7, self.action_preferences[ActionType.ATTACK] + 0.05)
+        
+        # Normalize preferences
+        total = sum(self.action_preferences.values())
+        for action in self.action_preferences:
+            self.action_preferences[action] /= total
+        
         # Update adaptation level
-        self.statistics.adaptation_level = min(100.0,
-            len(self.hand_strategy.player_behavior_memory) * self.personality.adaptation_rate * 5)
+        self.statistics.adaptation_level = min(100.0, len(self.player_patterns) * 10)
     
-    def refill_cards(self, count: int = 3):
-        """Add new cards to AI's hand"""
-        # Generate new cards with same themed distribution
-        if self.enemy.name in ["Kapre", "Dwende", "Duwende Chief"]:
-            new_deck = create_themed_deck("earth_creature")
-        elif self.enemy.name in ["Manananggal", "Tikbalang"]:
-            new_deck = create_themed_deck("air_creature")
-        elif self.enemy.name in ["Aswang", "Sigbin"]:
-            new_deck = create_themed_deck("fire_creature")
-        elif self.enemy.name == "Bakunawa":
-            new_deck = create_themed_deck("chaos_creature")
-        else:
-            new_deck = create_themed_deck("balanced")
-        
-        new_deck.shuffle()
-        new_cards = new_deck.draw(count)
-        
-        # Assign unique IDs
-        for i, card in enumerate(new_cards):
-            card.id = f"ai_{self.enemy.name}_refill_{len(self.available_cards) + i}"
-            card.playable = True
-        
-        self.available_cards.extend(new_cards)
+
     
     def get_ai_status(self) -> Dict[str, Any]:
         """Get comprehensive AI status and statistics"""
@@ -422,17 +463,12 @@ class BathalaAI:
             "personality": self.personality.name,
             "difficulty_level": self.difficulty_level,
             "difficulty_modifier": self.difficulty_modifier,
-            "cards_remaining": len(self.available_cards),
+            "action_preferences": dict(self.action_preferences),
             "statistics": {
                 "turns_played": self.statistics.turns_played,
-                "hands_played": self.statistics.hands_played,
                 "total_damage_dealt": self.statistics.total_damage_dealt,
                 "average_hand_value": self.statistics.average_hand_value,
                 "adaptation_level": self.statistics.adaptation_level,
-                "successful_bluffs": self.statistics.successful_bluffs,
-                "failed_bluffs": self.statistics.failed_bluffs,
-                "special_abilities_used": self.statistics.special_abilities_used,
-                "elemental_combos": self.statistics.elemental_combos_played,
             },
             "personality_config": {
                 "risk_tolerance": self.personality.risk_tolerance,
@@ -441,39 +477,37 @@ class BathalaAI:
                 "bluff_chance": self.personality.bluff_chance,
                 "adaptation_rate": self.personality.adaptation_rate,
             },
-            "learning_progress": self.hand_strategy.get_adaptation_summary(),
             "player_patterns": dict(self.player_patterns),
         }
     
     def simulate_decision(self, context: GameContext) -> AIDecision:
         """Simulate a decision without actually executing it"""
-        best_hand = self.hand_strategy.find_best_hand(self.available_cards, context)
-        
-        if not best_hand:
-            return self._create_end_turn_decision("No viable hands in simulation")
-        
-        modified_evaluation = self._apply_difficulty_modifier(best_hand.evaluation)
+        # Choose action without updating statistics
+        action = self._choose_action(context)
+        damage, block, effects = self._calculate_action_effects(action, context)
+        reasoning = f"[SIMULATION] {self._generate_reasoning(action, context)}"
+        confidence = self._calculate_confidence(action, context)
         
         return AIDecision(
-            action=ActionType.PLAY_HAND,
-            cards=best_hand.cards.copy(),
-            evaluation=modified_evaluation,
-            confidence=best_hand.confidence,
-            reasoning=f"[SIMULATION] {best_hand.reasoning}",
-            estimated_damage=modified_evaluation.total_value,
-            risk_level=best_hand.risk_level,
-            special_effects=modified_evaluation.special_effects.copy()
+            action=action,
+            confidence=confidence,
+            reasoning=reasoning,
+            estimated_damage=damage,
+            estimated_block=block,
+            risk_level=self._calculate_risk_level(action, context),
+            special_effects=effects
         )
     
     def override_personality(self, new_personality: AIPersonalityConfig):
         """Override AI personality for testing or special scenarios"""
         self.personality = new_personality
-        self.hand_strategy = HandStrategy(new_personality)
         self.statistics.personality_type = new_personality.name
+        # Recalculate action preferences with new personality
+        self.action_preferences = self._calculate_action_preferences()
     
-    def get_available_cards(self) -> List[Card]:
-        """Get copy of available cards (for debugging/display)"""
-        return self.available_cards.copy()
+    def get_current_action_preferences(self) -> Dict[ActionType, float]:
+        """Get current action preferences (for debugging/display)"""
+        return self.action_preferences.copy()
     
     def advance_attack_pattern(self):
         """Advance to next attack in pattern"""
@@ -482,7 +516,7 @@ class BathalaAI:
 
 if __name__ == "__main__":
     # Test the Bathala AI system
-    print("🐲 Bathala AI System Test 🐲\n")
+    print("🐲 Simplified Bathala AI System Test 🐲\n")
     
     # Create test enemy
     test_enemy = Enemy(
@@ -509,26 +543,28 @@ if __name__ == "__main__":
             ai_max_health=test_enemy.max_health,
             ai_block=test_enemy.block,
             turn_number=3,
-            cards_remaining=len(ai.available_cards)
+            cards_remaining=0  # AI doesn't have cards anymore
         )
         
         # Make decision
         decision = ai.make_decision(context)
         
-        print(f"   🃏 Cards Available: {len(ai.available_cards)}")
-        print(f"   🎯 Decision: {decision.action.value}")
-        if decision.cards:
-            print(f"   🖐️ Played: {[str(card) for card in decision.cards]}")
+        print(f"   🎯 Action: {decision.action.value}")
         print(f"   💥 Estimated Damage: {decision.estimated_damage}")
+        print(f"   🛡️ Estimated Block: {decision.estimated_block}")
         print(f"   🎲 Confidence: {decision.confidence:.1%}")
         print(f"   🎭 Reasoning: {decision.reasoning}")
         if decision.special_effects:
             print(f"   ✨ Effects: {', '.join(decision.special_effects)}")
+        print(f"   ⚠️ Risk Level: {decision.risk_level:.1%}")
         print()
     
     # Test adaptive learning
     print("🧠 Testing Adaptive Learning:")
     adaptive_ai = BathalaAI(test_enemy, 5)
+    
+    # Import for testing only
+    from enhanced_card_system import CardDeck, EnhancedHandEvaluator
     
     # Simulate player actions
     test_deck = CardDeck()
@@ -553,4 +589,11 @@ if __name__ == "__main__":
     print(f"\n📊 Learning Progress:")
     print(f"   Adaptation Level: {status['statistics']['adaptation_level']:.1f}%")
     print(f"   Player Patterns: {status['player_patterns']}")
-    print(f"   Memory: {status['learning_progress']['memory_usage']}")
+    print(f"   Action Preferences: {status['action_preferences']}")
+    
+    # Test different actions
+    print(f"\n⚔️ Testing Action Patterns:")
+    for turn in range(4):
+        decision = adaptive_ai.make_decision(context)
+        print(f"   Turn {turn+1}: {decision.action.value} - {decision.reasoning}")
+        adaptive_ai.advance_attack_pattern()

@@ -20,7 +20,6 @@ class AIConfig:
     difficulty_level: int = 1
     enable_adaptation: bool = True
     debug_mode: bool = False
-    ai_card_count: int = 8
     auto_adjust_difficulty: bool = False
     personality_override: Optional[AIPersonalityType] = None
 
@@ -29,7 +28,6 @@ class AIConfig:
 class AITurnResult:
     """Complete result of an AI turn with all effects"""
     decision: AIDecision
-    cards_played: List[Card]
     damage_dealt: int
     block_gained: int
     special_effects: List[str]
@@ -38,13 +36,14 @@ class AITurnResult:
     
     def get_summary(self) -> str:
         """Get human-readable summary of the turn"""
-        if self.decision.action == ActionType.PLAY_HAND:
-            cards_str = " ".join(str(card) for card in self.cards_played)
-            return f"Played {cards_str} for {self.damage_dealt} damage"
-        elif self.decision.action == ActionType.SPECIAL_ABILITY:
-            return f"Used special ability: {', '.join(self.special_effects)}"
+        if self.decision.action == ActionType.ATTACK:
+            return f"Attacked for {self.damage_dealt} damage"
+        elif self.decision.action == ActionType.DEFEND:
+            return f"Defended and gained {self.block_gained} block"
+        elif self.decision.action == ActionType.STATUS:
+            return f"Used status effect: {', '.join(self.special_effects)}"
         else:
-            return "Passed turn"
+            return "Unknown action"
 
 
 class CombatPhase(Enum):
@@ -118,7 +117,7 @@ class AIManager:
             self._debug_log(f"🤖 AI initialized for {enemy.name}")
             self._debug_log(f"📊 Difficulty Level: {self.config.difficulty_level}")
             self._debug_log(f"🧠 Personality: {self.ai.personality.name}")
-            self._debug_log(f"🃏 Starting Cards: {len(self.ai.get_available_cards())}")
+            self._debug_log(f"⚔️ Action Preferences: {self.ai.get_current_action_preferences()}")
     
     def execute_ai_turn(self, combat_state: CombatState) -> AITurnResult:
         """Execute AI turn and return complete results"""
@@ -161,9 +160,8 @@ class AIManager:
         """Process AI decision and calculate all effects"""
         result = AITurnResult(
             decision=decision,
-            cards_played=decision.cards.copy(),
-            damage_dealt=0,
-            block_gained=0,
+            damage_dealt=decision.estimated_damage,
+            block_gained=decision.estimated_block,
             special_effects=decision.special_effects.copy(),
             ai_status=self._get_ai_status_string()
         )
@@ -173,178 +171,25 @@ class AIManager:
                 "ai_statistics": self.ai.get_ai_status(),
                 "combat_state": combat_state,
                 "turn_time": time.time() - self.combat_start_time,
-                "available_cards": [str(card) for card in self.ai.get_available_cards()],
+                "action_preferences": self.ai.get_current_action_preferences(),
                 "decision_breakdown": {
                     "confidence": decision.confidence,
                     "risk_level": decision.risk_level,
-                    "bluff_factor": decision.bluff_factor
+                    "estimated_damage": decision.estimated_damage,
+                    "estimated_block": decision.estimated_block
                 }
             }
         
-        if decision.action == ActionType.PLAY_HAND:
-            # Calculate damage and effects
-            result.damage_dealt = self._calculate_damage(decision)
-            result.block_gained = self._calculate_block_gained(decision)
-            result.special_effects.extend(self._calculate_additional_effects(decision))
-            
-        elif decision.action == ActionType.SPECIAL_ABILITY:
-            # Process special ability effects
-            result.special_effects.extend(self._execute_special_ability())
-            result.block_gained = self._get_special_ability_block()
+        # Apply difficulty scaling to final values
+        if decision.action == ActionType.ATTACK:
+            result.damage_dealt = max(1, int(decision.estimated_damage * self.ai.difficulty_modifier))
+        elif decision.action == ActionType.DEFEND:
+            result.block_gained = max(0, int(decision.estimated_block * self.ai.difficulty_modifier))
+        elif decision.action == ActionType.STATUS:
+            # Status effects already calculated in the AI decision
+            pass
             
         return result
-    
-    def _calculate_damage(self, decision: AIDecision) -> int:
-        """Calculate final damage from AI's play"""
-        if not decision.evaluation:
-            return 0
-        
-        base_damage = decision.evaluation.total_value
-        
-        # Apply creature-specific modifiers
-        damage = self._apply_creature_damage_modifiers(base_damage, decision)
-        
-        # Apply difficulty scaling
-        damage = int(damage * self.ai.difficulty_modifier)
-        
-        return max(0, damage)
-    
-    def _calculate_block_gained(self, decision: AIDecision) -> int:
-        """Calculate block gained from AI's play"""
-        if not decision.cards:
-            return 0
-        
-        block = 0
-        
-        # Water cards provide block
-        water_cards = sum(1 for card in decision.cards if card.element == Element.WATER)
-        block += water_cards * 2
-        
-        # Earth cards can provide armor/block
-        earth_cards = sum(1 for card in decision.cards if card.element == Element.EARTH)
-        if earth_cards >= 3:
-            block += 5  # Earth mastery defensive bonus
-        
-        # Personality modifiers
-        if self.ai.personality.name == "Cautious":
-            block = int(block * 1.5)  # Cautious AI gets more defensive value
-        
-        return block
-    
-    def _calculate_additional_effects(self, decision: AIDecision) -> List[str]:
-        """Calculate additional special effects from the play"""
-        effects = []
-        
-        if not decision.cards:
-            return effects
-        
-        # Analyze elemental effects
-        element_counts = {}
-        for card in decision.cards:
-            element_counts[card.element] = element_counts.get(card.element, 0) + 1
-        
-        # Fire effects
-        fire_count = element_counts.get(Element.FIRE, 0)
-        if fire_count >= 2:
-            effects.append(f"🔥 Fire synergy: +{fire_count} burn damage next turn")
-        if fire_count >= 3:
-            effects.append("🔥 Ignite: Burns through block")
-        
-        # Air effects
-        air_count = element_counts.get(Element.AIR, 0)
-        if air_count == len(decision.cards) and len(decision.cards) > 1:
-            effects.append("💨 Air mastery: Cannot be blocked")
-        
-        # Earth effects
-        earth_count = element_counts.get(Element.EARTH, 0)
-        if earth_count >= 3:
-            effects.append("🌍 Earth mastery: +3 armor")
-        
-        # Creature-specific effects
-        effects.extend(self._get_creature_specific_effects(decision))
-        
-        return effects
-    
-    def _get_creature_specific_effects(self, decision: AIDecision) -> List[str]:
-        """Get creature-specific special effects"""
-        effects = []
-        creature_name = self.current_enemy.name if self.current_enemy else ""
-        
-        creature_effects = {
-            "Tikbalang": ["🌀 Misdirection: Player loses next card draw"],
-            "Kapre": ["🌳 Nature's Blessing: Heals 3 HP"],
-            "Manananggal": ["🦇 Terror: Player loses 1 block"],
-            "Bakunawa": ["🐉 Dragon Fear: Player cannot gain block next turn"],
-            "Aswang": ["👹 Intimidate: Player discards lowest card"],
-            "Sigbin": ["👻 Shadow Strike: Ignores 50% of block"],
-        }
-        
-        if creature_name in creature_effects and decision.evaluation and decision.evaluation.total_value > 25:
-            effects.extend(creature_effects[creature_name])
-        
-        return effects
-    
-    def _apply_creature_damage_modifiers(self, base_damage: int, decision: AIDecision) -> int:
-        """Apply creature-specific damage modifiers"""
-        if not self.current_enemy:
-            return base_damage
-        
-        damage = base_damage
-        creature_name = self.current_enemy.name
-        
-        # Creature-specific damage modifications
-        if creature_name == "Tikbalang":  # Chaotic
-            # High variance damage
-            variance = 0.7 + (random.random() * 0.6)  # 0.7 to 1.3 multiplier
-            damage = int(damage * variance)
-            
-        elif creature_name in ["Aswang", "Sigbin"]:  # Aggressive
-            # Higher damage but with miss chance
-            damage = int(damage * 1.2)
-            if random.random() < 0.1:  # 10% miss chance
-                damage = 0
-                
-        elif creature_name in ["Dwende", "Tiyanak"]:  # Cautious
-            # Lower but more consistent damage
-            damage = int(damage * 0.9)
-            
-        elif creature_name == "Kapre":  # Elemental
-            # Bonus for matching elements
-            if decision.cards:
-                unique_elements = len(set(card.element for card in decision.cards))
-                if unique_elements == 1:
-                    damage = int(damage * 1.25)
-                    
-        elif creature_name == "Bakunawa":  # Boss - adaptive
-            # Scales with turn number
-            turn_bonus = 1.0 + (self.ai.statistics.turns_played * 0.02)
-            damage = int(damage * min(turn_bonus, 1.5))
-        
-        return max(1, damage)  # Minimum 1 damage
-    
-    def _execute_special_ability(self) -> List[str]:
-        """Execute current special ability and return effects"""
-        if not self.current_enemy:
-            return []
-        
-        current_action = self.current_enemy.attack_pattern[self.current_enemy.current_pattern_index]
-        return [self.ai._get_special_ability_description(current_action)]
-    
-    def _get_special_ability_block(self) -> int:
-        """Get block gained from special abilities"""
-        if not self.current_enemy:
-            return 0
-        
-        current_action = self.current_enemy.attack_pattern[self.current_enemy.current_pattern_index]
-        
-        defensive_abilities = {
-            "defend": 10,
-            "smoke": 8,
-            "block": 12,
-            "shapeshift": 5,
-        }
-        
-        return defensive_abilities.get(current_action, 0)
     
     def record_player_action(self, cards_played: List[Card], turn_number: int, combat_state: CombatState):
         """Record player action for AI learning"""
@@ -412,20 +257,29 @@ class AIManager:
         # Confidence factor
         quality += decision.confidence * 20
         
-        # Damage efficiency
-        if decision.estimated_damage > 0:
-            efficiency = decision.estimated_damage / max(1, len(decision.cards))
-            quality += min(20, efficiency * 2)
+        # Action effectiveness
+        if decision.action == ActionType.ATTACK and decision.estimated_damage > 0:
+            # More quality for higher damage attacks
+            quality += min(20, decision.estimated_damage * 0.8)
+        elif decision.action == ActionType.DEFEND and decision.estimated_block > 0:
+            # Quality for defensive plays when needed
+            if combat_state.ai_health < combat_state.ai_max_health * 0.5:
+                quality += min(15, decision.estimated_block * 0.6)
+        elif decision.action == ActionType.STATUS:
+            # Status effects get moderate quality bonus
+            quality += 10
         
         # Context appropriateness
         if combat_state.ai_health < combat_state.ai_max_health * 0.3:
             # Low health - prefer high damage or healing
-            if decision.estimated_damage > 25:
+            if decision.action == ActionType.ATTACK and decision.estimated_damage > 15:
                 quality += 15
+            elif decision.action == ActionType.DEFEND:
+                quality += 10  # Defensive play when low health
         
         if combat_state.player_health < combat_state.player_max_health * 0.3:
             # Player low - go for kill
-            if decision.estimated_damage > 20:
+            if decision.action == ActionType.ATTACK and decision.estimated_damage > 10:
                 quality += 20
         
         # Risk appropriateness
@@ -502,7 +356,6 @@ class AIManager:
         status = self.ai.get_ai_status()
         return (f"{status['personality']} AI | "
                 f"Level {status['difficulty_level']} | "
-                f"{status['cards_remaining']} cards | "
                 f"Adaptation: {status['statistics']['adaptation_level']:.0f}%")
     
     def _debug_log(self, message: str):
@@ -517,8 +370,6 @@ class AIManager:
         
         print(f"🎯 AI Turn Result:")
         print(f"   Action: {result.decision.action.value}")
-        if result.cards_played:
-            print(f"   Cards: {[str(card) for card in result.cards_played]}")
         print(f"   Damage: {result.damage_dealt}")
         print(f"   Block: {result.block_gained}")
         print(f"   Confidence: {result.decision.confidence:.2f}")
@@ -541,8 +392,7 @@ if __name__ == "__main__":
     config = AIConfig(
         difficulty_level=3,
         enable_adaptation=True,
-        debug_mode=True,
-        ai_card_count=8
+        debug_mode=True
     )
     
     # Initialize manager
@@ -573,7 +423,7 @@ if __name__ == "__main__":
         ai_max_health=40,
         ai_block=0,
         player_hand_size=5,
-        ai_hand_size=8
+        ai_hand_size=0  # AI doesn't have cards anymore
     )
     
     # Execute AI turn
