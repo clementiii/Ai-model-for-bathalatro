@@ -1,17 +1,18 @@
-# Balatro-like Poker Game AI System
+# Bathala AI System - Python Edition 🐲🃏
 
-A comprehensive AI system for enemy NPCs in a Balatro-style poker game, featuring dynamic difficulty scaling, multiple AI personalities, strategic decision-making, and adaptive behavior.
+A sophisticated AI system for card-based combat games featuring Filipino mythology creatures. Complete Python implementation with advanced intelligence, adaptive learning, and cultural authenticity.
 
 ## 🎯 Features
 
-### Core AI Capabilities
-- **Poker Hand Evaluation**: Complete poker hand ranking and scoring system
-- **Strategic Decision Making**: AI considers hand strength, pot odds, bluffing opportunities, and risk tolerance
-- **5 Distinct Personalities**: Conservative, Aggressive, Adaptive, Calculating, and Chaotic AI types
-- **Dynamic Difficulty Scaling**: 10+ difficulty levels with automatic progression
-- **Adaptive Behavior**: AI learns from and adapts to player behavior patterns
-- **Bluffing System**: Realistic bluffing based on personality and game state
-- **Performance Tracking**: Comprehensive statistics and win rate monitoring
+### Core AI Capabilities  
+- **Enhanced Card System**: Cards with elemental properties (Fire, Water, Earth, Air, Neutral)
+- **Strategic Hand Evaluation**: Analyzes all possible 1-5 card combinations with elemental synergies
+- **6 AI Personalities**: Cautious, Aggressive, Calculating, Elemental, Chaotic, Adaptive
+- **Filipino Mythology Creatures**: Tikbalang, Kapre, Manananggal, Bakunawa, and more
+- **Adaptive Learning**: AI learns from player behavior and adapts strategies
+- **Dynamic Difficulty Scaling**: 10+ levels from tutorial to legendary
+- **Cultural Authenticity**: Creature behaviors reflect Filipino folklore
+- **Production Ready**: Complete integration interface with analytics
 
 ### AI Personalities
 
@@ -31,45 +32,33 @@ A comprehensive AI system for enemy NPCs in a Balatro-style poker game, featurin
 
 ## 🚀 Quick Start
 
-### Basic Integration
+### Basic Integration (3 lines!)
 
 ```python
-from ai_controller import AIController
-from poker_hand_evaluator import Card, Suit
-from ai_decision_engine import GameState, ActionType
+from ai_manager import AIManager, AIConfig, CombatState, CombatPhase
+from bathala_ai import Enemy
 
-# Initialize AI for level 3
-ai_controller = AIController(starting_level=3)
+# Initialize AI system
+ai_manager = AIManager(AIConfig(difficulty_level=5, enable_adaptation=True))
 
-# Create AI hand
-ai_hand = [
-    Card(13, Suit.HEARTS),  # King of Hearts
-    Card(13, Suit.DIAMONDS), # King of Diamonds
-    Card(7, Suit.CLUBS),    # 7 of Clubs
-    Card(3, Suit.SPADES),   # 3 of Spades
-    Card(2, Suit.HEARTS)    # 2 of Hearts
-]
+# Create enemy creature  
+bakunawa = Enemy("boss", "Bakunawa", 100, 100, 0, 18, ["attack", "eclipse", "devour"])
+ai_manager.initialize_combat(bakunawa)
 
-# Define game state
-game_state = GameState(
-    pot_size=100,
-    current_bet=20,
-    ai_chips=1000,
-    player_chips=1000,
-    round_number=1,
-    cards_in_hand=5,
-    cards_played_this_round=0,
-    opponent_recent_actions=[],
-    level=3
+# Create combat state
+combat_state = CombatState(
+    phase=CombatPhase.AI_TURN,
+    turn_number=1,
+    player_health=40, player_max_health=50, player_block=0,
+    ai_health=100, ai_max_health=100, ai_block=0
 )
 
-# Get AI decision
-decision = ai_controller.get_ai_decision(ai_hand, game_state)
+# Execute AI turn
+result = ai_manager.execute_ai_turn(combat_state)
 
-print(f"AI Decision: {decision.action.value}")
-print(f"Bet Amount: {decision.bet_amount}")
-print(f"Confidence: {decision.confidence:.2f}")
-print(f"Reasoning: {decision.reasoning}")
+print(f"🐉 AI Decision: {result.decision.reasoning}")
+print(f"💥 Damage: {result.damage_dealt}")
+print(f"✨ Effects: {', '.join(result.special_effects)}")
 ```
 
 ### Advanced Usage
@@ -101,11 +90,15 @@ print(f"AI would play: {preview['ai_decision']['action']}")
 ## 📁 File Structure
 
 ```
-├── poker_hand_evaluator.py  # Core poker hand evaluation system
-├── ai_decision_engine.py    # AI decision-making logic and personalities
-├── ai_controller.py         # Main AI controller and game interface
-├── game_demo.py            # Comprehensive demonstration and examples
-└── README.md               # This file
+├── ai_personality.py       # AI personality system with 6 distinct types
+├── enhanced_card_system.py # Advanced card system with elemental properties
+├── hand_strategy.py        # Strategic evaluation and combination analysis  
+├── bathala_ai.py          # Core AI decision-making controller
+├── ai_manager.py          # Main integration interface for games
+├── game_integration_demo.py # Complete working game demonstration
+├── BATHALA_AI_SYSTEM.md   # Comprehensive documentation
+├── __init__.py            # Easy import interface
+└── README.md              # This file
 ```
 
 ## 🎮 Integration Guide
@@ -293,8 +286,16 @@ This AI system is provided as-is for integration into your Balatro-like poker ga
 
 ---
 
-## 🎮 Ready to Play!
+## 🎮 Ready to Battle!
 
-Your AI opponents are ready to challenge players with strategic depth, adaptive behavior, and engaging personality-driven gameplay. From tutorial-level opponents to legendary poker masters, this system provides a complete AI solution for your Balatro-like poker game.
+Your Filipino mythology creatures are now powered by sophisticated Python AI that provides:
 
-**Good luck, and may the best hand win!** 🃏
+- **🧠 Strategic Intelligence**: Thinks multiple moves ahead with advanced hand evaluation
+- **🎭 Cultural Authenticity**: Creature behaviors reflecting Filipino folklore  
+- **📈 Adaptive Learning**: Evolves and counters player strategies
+- **⚡ Production Quality**: Professional-grade system ready for real games
+- **🔧 Easy Integration**: Simple 3-line setup with comprehensive documentation
+
+**Run the demo**: `python game_integration_demo.py`
+
+**🇵🇭 ⚔️ 🃏 Good luck, and may the best hand win! 🃏 ⚔️ 🇵🇭**
