@@ -20,6 +20,7 @@ from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QBrush
 from ai_manager import AIManager, AIConfig, CombatState, CombatPhase
 from bathala_ai import Enemy
 from enhanced_card_system import Card, CardDeck, EnhancedHandEvaluator, Element, Suit
+from dynamic_difficulty_adjustment import get_dda_system, DynamicDifficultyAdjuster
 
 
 @dataclass
@@ -154,11 +155,15 @@ class BathalaGameGUI(QMainWindow):
         )
         self.ai_manager = AIManager(ai_config)
         
+        # Dynamic Difficulty Adjustment System
+        self.dda_system = get_dda_system()
+        
         # Game state
         self.player: Optional[Player] = None
         self.current_enemy: Optional[Enemy] = None
         self.combat_state: Optional[CombatState] = None
         self.turn_number = 0
+        self.current_combat_id: Optional[str] = None
         
         # Available enemies for different difficulties
         self.available_enemies = self._create_enemy_roster()
@@ -533,6 +538,12 @@ class BathalaGameGUI(QMainWindow):
         self.analytics_btn.setEnabled(False)
         actions_layout.addWidget(self.analytics_btn)
         
+        # DDA Analytics button
+        self.dda_analytics_btn = QPushButton("⚖️ DDA Analytics")
+        self.dda_analytics_btn.setToolTip("View Dynamic Difficulty Adjustment performance and statistics")
+        self.dda_analytics_btn.clicked.connect(self.show_dda_analytics)
+        actions_layout.addWidget(self.dda_analytics_btn)
+        
         layout.addWidget(actions_group, 6, 0, 1, 3)
     
     def setup_styles(self):
@@ -740,9 +751,17 @@ class BathalaGameGUI(QMainWindow):
         self.current_enemy = self.available_enemies[enemy_name]
         self.turn_number = 0
         
+        # Apply DDA modifiers to enemy
+        self.current_enemy = self.dda_system.apply_enemy_modifiers(self.current_enemy)
+        
         # Reset enemy health
         self.current_enemy.current_health = self.current_enemy.max_health
         self.current_enemy.block = 0
+        
+        # Start DDA tracking for this combat
+        self.current_combat_id = self.dda_system.performance_tracker.start_combat(
+            self.player.current_health, enemy_name
+        )
         
         # Initialize AI for this enemy
         self.ai_manager.initialize_combat(self.current_enemy)
@@ -765,6 +784,16 @@ class BathalaGameGUI(QMainWindow):
         self.log_message(f"🐲 Enemy: {self.current_enemy.current_health}/{self.current_enemy.max_health} HP")
         self.log_message(f"👤 Player: {self.player.current_health}/{self.player.max_health} HP")
         self.log_message(f"🧠 AI Personality: {self.ai_manager.ai.personality.name}")
+        
+        # Display DDA status and narrative events
+        dda_status = self.dda_system.get_dda_status()
+        self.log_message(f"⚖️ Difficulty Tier: {dda_status['current_tier']}")
+        self.log_message(f"📊 Performance Score: {dda_status['performance']['pps']:.2f}")
+        
+        # Show recent narrative events
+        narrative_events = self.dda_system.get_recent_narrative_events(1)
+        if narrative_events:
+            self.log_message(f"✨ {narrative_events[-1]}")
         
         # Enable combat controls
         self.attack_btn.setEnabled(False)  # Will be enabled when cards are selected
@@ -933,6 +962,9 @@ class BathalaGameGUI(QMainWindow):
         # Record player action for AI learning
         self.ai_manager.record_player_action(selected_cards, self.turn_number, self.combat_state)
         
+        # Record cards played for DDA tracking
+        self.dda_system.performance_tracker.record_cards_played(evaluation, self.turn_number)
+        
         # Update combat state
         self.combat_state.player_health = self.player.current_health
         self.combat_state.player_block = self.player.block
@@ -981,6 +1013,11 @@ class BathalaGameGUI(QMainWindow):
             self.player.current_health -= actual_damage
             self.player.block = max(0, self.player.block - ai_result.damage_dealt)
             self.log_message(f"💥 AI deals {actual_damage} damage to player!")
+            
+            # Record damage taken for DDA tracking
+            self.dda_system.performance_tracker.record_damage_taken(
+                actual_damage, self.player.current_health, self.player.max_health
+            )
         
         if ai_result.block_gained > 0:
             self.current_enemy.block += ai_result.block_gained
@@ -1041,6 +1078,23 @@ class BathalaGameGUI(QMainWindow):
     
     def end_combat(self):
         """End current combat"""
+        # End DDA combat tracking
+        if self.current_combat_id and self.current_enemy:
+            victory = self.current_enemy.current_health <= 0
+            self.dda_system.performance_tracker.end_combat(
+                victory, self.player.current_health, self.turn_number
+            )
+            
+            # Update difficulty based on performance
+            difficulty_changed = self.dda_system.update_difficulty()
+            if difficulty_changed:
+                self.log_message("⚖️ Difficulty adjusted based on performance")
+                
+                # Show new narrative events
+                narrative_events = self.dda_system.get_recent_narrative_events(1)
+                if narrative_events:
+                    self.log_message(f"✨ {narrative_events[-1]}")
+        
         # Disable combat controls
         self.attack_btn.setEnabled(False)
         self.block_btn.setEnabled(False)
@@ -1051,6 +1105,13 @@ class BathalaGameGUI(QMainWindow):
         self.update_hand_preview()
         
         self.log_message("⚔️ Combat ended!")
+        
+        # Show updated DDA status
+        dda_status = self.dda_system.get_dda_status()
+        self.log_message(f"📊 Current Performance Score: {dda_status['performance']['pps']:.2f}")
+        self.log_message(f"⚖️ Current Difficulty Tier: {dda_status['current_tier']}")
+        
+        self.current_combat_id = None
     
     def update_player_display(self):
         """Update player status display"""
@@ -1171,6 +1232,73 @@ Current Combat State:
 """
         
         QMessageBox.information(self, "📊 Combat Analytics", analytics_text)
+    
+    def show_dda_analytics(self):
+        """Show DDA system analytics and performance data"""
+        dda_status = self.dda_system.get_dda_status()
+        
+        analytics_dialog = QMessageBox(self)
+        analytics_dialog.setWindowTitle("⚖️ Dynamic Difficulty Adjustment Analytics")
+        analytics_dialog.setIcon(QMessageBox.Information)
+        
+        # Create detailed analytics text
+        analytics_text = f"""🎯 PLAYER PERFORMANCE SCORE (PPS): {dda_status['performance']['pps']:.2f}
+
+⚖️ CURRENT DIFFICULTY TIER: {dda_status['current_tier']}
+
+📈 PERFORMANCE TRENDS:
+• Trend Direction: {'+' if dda_status['performance']['trend'] >= 0 else '-'}{abs(dda_status['performance']['trend']):.3f}
+• Performance Volatility: {dda_status['performance']['volatility']:.3f}
+• Total Combats: {dda_status['performance']['total_combats']}
+• Win Rate: {dda_status['performance']['win_rate']:.1%}
+
+🔧 CURRENT MODIFIERS:
+• Enemy Health: {dda_status['modifiers']['enemy_health_modifier']:.0%}
+• Enemy Damage: {dda_status['modifiers']['enemy_damage_modifier']:.0%}
+• Shop Prices: {dda_status['modifiers']['shop_price_modifier']:.0%}
+• Gold Rewards: {dda_status['modifiers']['gold_reward_modifier']:.0%}
+
+🎭 ADAPTIVE FEATURES:
+• Rest Site Priority: {'Yes' if dda_status['modifiers']['favor_rest_sites'] else 'No'}
+• Treasure Priority: {'Yes' if dda_status['modifiers']['favor_treasure_sites'] else 'No'}
+• Narrative Blessing: {'Active' if dda_status['modifiers']['narrative_blessing_active'] else 'Inactive'}
+• Narrative Challenge: {'Active' if dda_status['modifiers']['narrative_challenge_active'] else 'Inactive'}
+
+⚙️ SYSTEM SETTINGS:
+• Adaptation Rate: {dda_status['adaptation_settings']['adaptation_rate']:.1%}
+• Stability Threshold: {dda_status['adaptation_settings']['stability_threshold']:.1f}
+• Session Duration: {dda_status['performance']['session_duration']:.0f}s
+
+✨ RECENT NARRATIVE EVENTS:"""
+        
+        # Add recent narrative events
+        narrative_events = self.dda_system.get_recent_narrative_events(3)
+        if narrative_events:
+            for i, event in enumerate(narrative_events, 1):
+                analytics_text += f"\n{i}. {event}"
+        else:
+            analytics_text += "\nNo recent narrative events"
+        
+        analytics_text += f"""
+
+🎓 ACADEMIC RESEARCH NOTES:
+This DDA system implements a rule-based adaptive difficulty engine centered around 
+Player Performance Score (PPS) calculation. The system demonstrates:
+
+• Real-time performance tracking across multiple metrics
+• Smooth difficulty transitions to maintain flow state
+• Narrative framing to preserve immersion
+• Data collection for future ML enhancement
+
+Research Question: "How can a rule-based adaptive difficulty system maintain 
+player flow while collecting data for hybrid ML approaches?"
+
+Current Implementation: Phase 1 (Rule-based reactive system)
+Proposed Extension: LSTM-based proactive difficulty prediction"""
+        
+        analytics_dialog.setText(analytics_text)
+        analytics_dialog.setDetailedText(f"Raw DDA Data:\n{dda_status}")
+        analytics_dialog.exec_()
 
 
 def main():
